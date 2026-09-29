@@ -27,23 +27,23 @@ validation pipeline so that only genuine exceptions require human review.
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              Streamlit Frontend (Community Cloud)       │
-│ Upload │ Overview │ Exceptions │ Memory Intelligence   │
+│ Upload │ Overview │ Exceptions │ Memory Intelligence    │
 │              Invoice History │ Audit Trail              │
 └──────────────────────────┬──────────────────────────────┘
                            │ HTTPS
 ┌──────────────────────────▼──────────────────────────────┐
-│               FastAPI Backend (Render)                  │
+│               FastAPI Backend                           │
 │ Invoice processing │ Clerk feedback │ Vendor/memory APIs│
 │ Invoice detail/history │ Audit trail │ Dashboard stats  │
 └──────────────────────────┬──────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────┐
-│              LangGraph Agent Pipeline                    │
-│ OCR → Extraction → Validation → PO/Contract Matching   │
+│              LangGraph Agent Pipeline                   │
+│ OCR → Extraction → Validation → PO/Contract Matching    │
 │                         ↓                               │
 │              Vendor/PO Memory Recall                    │
 │                         ↓                               │
-│             Decision → Clerk Review                      │
+│             Decision → Clerk Review                     │
 └──────────────────────────┬──────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────┐
@@ -417,9 +417,8 @@ The system enforces these rules unconditionally:
 1. **SQLite persistence on Render** — the database uses a local SQLite file and may be ephemeral on the current hosting setup. Reference data and learned memories can be lost on redeploy; call `/seed-db` to restore seeded data. For durable production storage, configure a persistent database (for example PostgreSQL) and update the database configuration.
 2. **Scanned PDFs** — Tesseract OCR handles image files but may struggle with low-resolution scans.
 3. **No authentication** — the API has no auth layer. Add OAuth2/API key before exposing publicly.
-4. **Render free tier cold starts** — backend sleeps after 15 minutes idle; first request takes 30–50 seconds.
-5. **Vendor matching** — extracted vendor name/code is used to look up vendor history, but the code does not enforce that the invoice vendor matches the vendor associated with its PO or contract.
-6. **Prompt-injection test scope** — the deterministic test pre-seeds extracted fields and does not exercise the live LLM extraction prompt. It verifies downstream matching behavior, not general prompt-injection resistance.
+4. **Vendor matching** — extracted vendor name/code is used to look up vendor history, but the code does not enforce that the invoice vendor matches the vendor associated with its PO or contract.
+5. **Prompt-injection test scope** — the deterministic test pre-seeds extracted fields and does not exercise the live LLM extraction prompt. It verifies downstream matching behavior, not general prompt-injection resistance.
 
 ---
 
@@ -433,6 +432,4 @@ The system enforces these rules unconditionally:
 
 ---
 
-## License
 
-MIT
