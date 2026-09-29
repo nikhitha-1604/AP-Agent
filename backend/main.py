@@ -558,9 +558,38 @@ def get_vendor_memory(vendor_id: int, db: Session = Depends(get_db)):
     }
 
 
+@app.get("/memories/recent", tags=["Memory & Vendors"])
+def get_recent_memories(limit: int = 5, db: Session = Depends(get_db)):
+    """
+    Returns the most recent 3-5 HindsightMemory records from the database.
+    """
+    memories = (
+        db.query(HindsightMemory)
+        .order_by(HindsightMemory.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    res = []
+    for m in memories:
+        v_name = m.vendor.name if m.vendor else "Vendor"
+        res.append({
+            "id": m.id,
+            "vendor_name": v_name,
+            "invoice_number": m.invoice_number,
+            "po_number": m.po_number,
+            "issue_type": m.issue_type,
+            "issue_summary": m.issue_summary,
+            "clerk_action": m.clerk_action,
+            "clerk_reason": m.clerk_reason,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        })
+    return res
+
+
 # ---------------------------------------------------------------------------
 # GET /invoices — list all invoices
 # ---------------------------------------------------------------------------
+
 
 @app.get("/invoices", tags=["Invoices"])
 def list_invoices(
@@ -583,17 +612,23 @@ def list_invoices(
         logger.error(f"Database error listing invoices: {exc}")
         raise HTTPException(status_code=500, detail="Database error while fetching invoices.")
 
-    return [
-        {
+    res = []
+    for inv in invoices:
+        has_mem = False
+        if inv.vendor_id:
+            has_mem = db.query(HindsightMemory).filter(HindsightMemory.vendor_id == inv.vendor_id).count() > 0
+        res.append({
             "id": inv.id,
             "invoice_number": inv.invoice_number,
+            "vendor_name": inv.vendor.name if inv.vendor else None,
             "status": inv.status.value if inv.status else "UNKNOWN",
             "total_amount": inv.total_amount,
             "currency": inv.currency,
             "created_at": inv.created_at.isoformat() if inv.created_at else None,
-        }
-        for inv in invoices
-    ]
+            "memory_recalled": has_mem,
+        })
+    return res
+
 
 
 # ---------------------------------------------------------------------------
@@ -736,6 +771,7 @@ def get_stats(db: Session = Depends(get_db)):
         total_value = db.query(
             func.sum(Invoice.total_amount)
         ).scalar() or 0.0
+        total_memories = db.query(HindsightMemory).count()
     except SQLAlchemyError as exc:
         logger.error(f"Database error fetching stats: {exc}")
         raise HTTPException(status_code=500, detail="Database error fetching stats.")
@@ -750,7 +786,9 @@ def get_stats(db: Session = Depends(get_db)):
         "approved": approved,
         "rejected": rejected,
         "total_scheduled_value": round(total_value, 2),
+        "total_hindsight_memories": total_memories,
     }
+
 
 
 
