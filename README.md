@@ -12,19 +12,7 @@ does not connect to an external Hindsight Cloud service or require a Hindsight A
 
 ---
 
-## Live Deployment
 
-| Service | URL |
-|---------|-----|
-| Frontend (Streamlit) | https://ap-invoice-agent-cqexl6zmegzzsmmgttuwff.streamlit.app |
-| Backend API (Render) | https://ap-invoice-agent-backend.onrender.com |
-| API Docs (Swagger) | https://ap-invoice-agent-backend.onrender.com/docs |
-
-> **Note:** The backend runs on Render's free tier and spins down after 15 minutes of
-> inactivity. The first request after idle may take 30–50 seconds to respond while
-> the instance wakes up. The frontend handles this automatically with a wake-up probe.
-
----
 
 ## Problem Statement
 
