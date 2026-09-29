@@ -1,8 +1,14 @@
 # AP Invoice & Contract Exception Agent
 
-An AI-powered Accounts Payable automation system that processes invoice PDFs,
-validates them against Purchase Orders and vendor contracts, detects exceptions,
-and routes clean invoices to automatic payment — routing exceptions to an AP clerk.
+An AI-assisted Accounts Payable workflow that extracts invoice data, checks it against
+Purchase Orders and vendor contracts, and routes clean invoices to straight-through
+processing or exceptions to an AP clerk. The agent also recalls previous vendor and
+Purchase Order decisions to provide context for recommendations, then stores clerk
+resolutions as memories for future invoices.
+
+**Memory implementation note:** “Hindsight Memory” is currently implemented with
+SQLAlchemy models stored in the application's configured database. This repository
+does not connect to an external Hindsight Cloud service or require a Hindsight API key.
 
 ---
 
@@ -33,48 +39,50 @@ validation pipeline so that only genuine exceptions require human review.
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              Streamlit Frontend (Community Cloud)       │
-│  Upload PDF  │  Dashboard  │  Exceptions  │  Audit Log  │
+│ Upload │ Overview │ Exceptions │ Memory Intelligence   │
+│              Invoice History │ Audit Trail              │
 └──────────────────────────┬──────────────────────────────┘
                            │ HTTPS
 ┌──────────────────────────▼──────────────────────────────┐
 │               FastAPI Backend (Render)                  │
-│  POST /upload-invoice   GET /invoices  GET /invoice/{id}│
-│  GET /invoice/{id}/audit  GET /stats  POST /seed-db     │
+│ Invoice processing │ Clerk feedback │ Vendor/memory APIs│
+│ Invoice detail/history │ Audit trail │ Dashboard stats  │
 └──────────────────────────┬──────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────┐
 │              LangGraph Agent Pipeline                    │
-│                                                         │
-│   OCR Engine                                            │
-│       ↓                                                 │
-│   extraction_node  (Groq — llama-3.3-70b-versatile)    │
-│       ↓                                                 │
-│   validation_node  (Pydantic field checks)              │
-│       ↓  (EXTRACTION_FAILED → skip to decide)           │
-│   matching_node    (PO + Contract lookup via DB)        │
-│       ↓                                                 │
-│   decision_node    (STRAIGHT_THROUGH / EXCEPTION)       │
+│ OCR → Extraction → Validation → PO/Contract Matching   │
+│                         ↓                               │
+│              Vendor/PO Memory Recall                    │
+│                         ↓                               │
+│             Decision → Clerk Review                      │
 └──────────────────────────┬──────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────┐
-│                Service / Repository Layer                │
-│  MatchingEngine  │  AuditService  │  InvoiceRepository  │
+│ SQLAlchemy persistence: invoices, audit, feedback,      │
+│ hindsight memories, vendor profiles, POs and contracts  │
 └──────────────────────────┬──────────────────────────────┘
                            │
                     SQLite (ap_agent.db)
 ```
+
+Memory recall decorates detected exceptions with historical context, priority, and
+suggested resolutions. It is advisory: an exception still routes to human review, and
+memory recommendations do not bypass mandatory PO, duplicate-invoice, or contract
+checks. Extraction failures skip matching and memory recall. Duplicate detection is
+performed by the upload endpoint after the LangGraph decision, and still forces review.
 
 ---
 
 ## Folder Structure
 
 ```
-AP-Invoice-Agent/
+AP-Agent-main/
 │
 ├── backend/
 │   ├── agents/
 │   │   ├── graph.py              # LangGraph StateGraph + routing
-│   │   └── nodes.py              # extraction, validation, matching, decision nodes
+│   │   └── nodes.py              # extraction, validation, matching, memory, decision
 │   ├── models/
 │   │   └── models.py             # SQLAlchemy ORM models
 │   ├── repositories/
@@ -84,16 +92,14 @@ AP-Invoice-Agent/
 │   ├── services/
 │   │   ├── matching.py           # MatchingEngine (PO + contract comparison)
 │   │   └── audit_service.py      # AuditService (writes audit log records)
+│   │   └── memory_service.py     # Recall, clerk feedback, vendor profiles
 │   ├── tests/
-│   │   └── eval_suite.py         # pytest evaluation suite (5 scenarios)
+│   │   └── test_eval_suite.py    # Deterministic evaluation scenarios
 │   ├── tools/
 │   │   └── ocr_engine.py         # PDF and image text extraction
-│   ├── invoices/                 # Sample invoice PDFs for testing
 │   ├── database.py               # SQLAlchemy engine + session setup
 │   ├── main.py                   # FastAPI application + all endpoints
-│   ├── seed_test_data.py         # Seeds reference Vendor, PO, Contract data
-│   ├── generate_all_scenarios.py # Generates all 5 scenario PDFs
-│   ├── generate_invoice_006.py   # Generates second straight-through PDF
+│   ├── seed_test_data.py         # Seeds multi-vendor reference/memory data
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── pytest.ini
@@ -113,12 +119,13 @@ AP-Invoice-Agent/
 
 | Layer | Technology |
 |-------|-----------|
-| LLM | Groq API — llama-3.3-70b-versatile |
+| LLM | Groq API — `openai/gpt-oss-120b` |
 | Agent Framework | LangGraph |
 | Validation | Pydantic v2 |
 | Backend API | FastAPI + Uvicorn |
 | OCR | pypdf + pytesseract |
-| Database | SQLite via SQLAlchemy |
+| Database | SQLAlchemy; SQLite at `./ap_agent.db` in the backend working directory |
+| Memory | SQLAlchemy-backed Hindsight memory, clerk feedback, and vendor profiles |
 | Frontend | Streamlit + Plotly |
 | Backend Hosting | Render (free tier) |
 | Frontend Hosting | Streamlit Community Cloud |
@@ -131,13 +138,16 @@ AP-Invoice-Agent/
 
 ### Backend
 
-Create a `.env` file in the `backend/` directory:
+Create a `.env` file in the `backend/` directory for local development:
 
 ```env
 GROQ_API_KEY=your_groq_api_key_here
 ```
 
 Get a free Groq API key at https://console.groq.com
+
+No separate memory-service credential is currently used. Memory records are written to
+the same database as invoices. The database URL is set to SQLite in `backend/database.py`.
 
 ### Frontend
 
@@ -158,11 +168,11 @@ Locally this defaults to `http://localhost:8000`.
 - Python 3.11+
 - [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) installed and on PATH
 
-### 1. Clone the repository
+### 1. Get the source
 
 ```bash
 git clone https://github.com/24wh1a0598/AP-Invoice-Agent.git
-cd AP-Invoice-Agent/AP-Invoice-Agent-main
+cd AP-Invoice-Agent
 ```
 
 ### 2. Backend
@@ -255,8 +265,8 @@ POST https://ap-invoice-agent-backend.onrender.com/seed-db
 
 Use the Swagger UI at `/docs` → `POST /seed-db` → Try it out → Execute.
 
-This creates the Dell vendor, `PO-DELL-2024`, and `CTR-DELL-2024` contract that
-the sample invoices reference. Safe to call multiple times — skips existing records.
+This seeds five vendors, their Purchase Orders and contracts, and initial vendor
+memory examples. Safe to call multiple times; existing reference records are retained.
 
 > **Important:** Render free tier uses an ephemeral filesystem. The SQLite database
 > resets on every redeploy. Re-run `/seed-db` after each deployment.
@@ -271,26 +281,9 @@ Upload a PDF or image invoice for processing.
 
 **Request:** `multipart/form-data` — field `file` (PDF, PNG, JPG)
 
-**Response:**
-```json
-{
-  "invoice_id": 1,
-  "invoice_number": "INV-SCENARIO-001",
-  "status": "STRAIGHT_THROUGH",
-  "extracted_fields": { ... },
-  "exceptions": [],
-  "reasoning": [
-    "File received. Starting extraction...",
-    "Extraction successful",
-    "Validation passed: All required fields present and non-empty.",
-    "PO 'PO-DELL-2024' found. Running line-item comparison.",
-    "PO matching: all line items match",
-    "Contract compliance passed.",
-    "Decision: STRAIGHT_THROUGH — all checks passed. Payment scheduled."
-  ],
-  "extraction_error": null
-}
-```
+The response includes extracted fields, exceptions, agent reasoning, and a
+`recalled_memory` object containing matching historical memories, vendor profile
+information, decorated exception recommendations, and an executive summary.
 
 **Status values:**
 
@@ -298,7 +291,7 @@ Upload a PDF or image invoice for processing.
 |-------|---------|
 | `STRAIGHT_THROUGH` | All checks passed — payment scheduled |
 | `EXCEPTION` | One or more issues found — routed to AP clerk |
-| `EXTRACTION_FAILED` | Could not extract required fields |
+| `EXCEPTION` | Includes validation/extraction failures and other issues requiring review |
 
 ---
 
@@ -310,25 +303,56 @@ Paginated list of all invoices. Query params: `skip` (default 0), `limit` (defau
 
 ### GET /invoice/{id}
 
-Full detail for one invoice including its exceptions.
+Full detail for one invoice including its vendor, exceptions enriched with memory
+recommendations, recalled memories, vendor profile, and clerk feedback history.
 
 ---
 
 ### GET /invoice/{id}/audit
 
-Complete ordered audit trail for one invoice — every agent node, decision, and timestamp.
+Complete ordered audit trail for one invoice, including agent steps and clerk feedback.
+
+---
+
+### POST /invoice/{id}/feedback
+
+Record a clerk decision with a required explanation. JSON body:
+
+```json
+{
+  "action": "APPROVE",
+  "reason": "Verified the price variance with the procurement manager.",
+  "exception_type": "PO_MISMATCH"
+}
+```
+
+Supported actions are `APPROVE`, `REJECT`, and `RESOLVE`. The decision updates the
+invoice, writes a clerk feedback record and Hindsight memory, recalculates the vendor
+profile, and adds an audit event.
+
+---
+
+### Memory and vendor endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /vendors` | Vendor summaries and reliability metrics |
+| `GET /vendor/{vendor_id}/memory` | Vendor profile and its historical memories |
+| `GET /memories/recent?limit=5` | Most recent learned memory records |
 
 ---
 
 ### GET /stats
 
-Dashboard summary: total invoices, straight-through rate, review required count, total scheduled value.
+Dashboard summary: invoice counts, straight-through rate, review count, summed invoice
+value (returned as `total_scheduled_value`), and total Hindsight memories.
+| 5 | Prompt-injection text with pre-seeded mismatched fields | EXCEPTION; matching rules still flag the mismatch |
 
 ---
 
 ### POST /seed-db
 
-Seeds the database with reference Vendor, PO, and Contract data.
+Seeds multi-vendor reference data, Purchase Orders, contracts, and example memories.
 Safe to call multiple times. Required after every Render redeploy.
 
 ---
@@ -343,7 +367,7 @@ Health check — returns `{"status": "online", ...}`.
 
 | Type | Meaning |
 |------|---------|
-| `EXTRACTION_FAILED` | LLM could not extract data from the document |
+| `EXTRACTION_FAILED` | Extraction returned no usable invoice data |
 | `MISSING_REQUIRED_FIELD` | Required field absent after extraction |
 | `UNKNOWN_PO` | PO number not found in database |
 | `MISSING_PO` | Invoice has no PO number |
@@ -354,28 +378,9 @@ Health check — returns `{"status": "online", ...}`.
 | `DB_ERROR` | Database error during lookup |
 | `MATCHING_ERROR` | Unexpected error during matching node |
 
----
-
-## Sample Invoice Scenarios
-
-Six sample PDFs are included in `backend/invoices/` for end-to-end testing:
-
-| File | Expected Result | Exception |
-|------|----------------|-----------|
-| `01_straight_through.pdf` | STRAIGHT_THROUGH | — |
-| `02_price_mismatch.pdf` | EXCEPTION | PO_MISMATCH (price) |
-| `03_unknown_po.pdf` | EXCEPTION | UNKNOWN_PO |
-| `04_contract_violation.pdf` | EXCEPTION | CONTRACT_VIOLATION + PO_MISMATCH (qty) |
-| `05_extraction_failed.pdf` | EXCEPTION | MISSING_REQUIRED_FIELD |
-| `06_straight_through_2.pdf` | STRAIGHT_THROUGH | — |
-
-Regenerate them locally:
-
-```bash
-cd backend
-python generate_all_scenarios.py
-python generate_invoice_006.py
-```
+Other exception values include `DUPLICATE_INVOICE`, `TAX_DISCREPANCY`, and
+`DB_ERROR`. The matching and memory layers also distinguish `UNKNOWN_CONTRACT` and
+`CONTRACT_VIOLATION`.
 
 ---
 
@@ -383,10 +388,10 @@ python generate_invoice_006.py
 
 ```bash
 cd backend
-pytest tests/eval_suite.py -v
+pytest tests/test_eval_suite.py -v
 ```
 
-Five deterministic tests with pre-seeded data — no real LLM calls made.
+Seven deterministic scenarios use pre-seeded data and avoid real LLM calls.
 
 | # | Scenario | Expected |
 |---|----------|---------|
@@ -394,7 +399,8 @@ Five deterministic tests with pre-seeded data — no real LLM calls made.
 | 2 | Price variance on line item | EXCEPTION / PO_MISMATCH |
 | 3 | Total exceeds contract limit | EXCEPTION / CONTRACT_VIOLATION |
 | 4 | Missing required field | EXCEPTION / MISSING_REQUIRED_FIELD |
-| 5 | Prompt injection in document | EXCEPTION (injection has no effect) |
+| 6 | Historical memory recall and exception recommendations | EXCEPTION; memory is advisory |
+| 7 | Clerk feedback and vendor profile update | Feedback/memory persisted |
 
 ---
 
@@ -409,16 +415,23 @@ The system enforces these rules unconditionally:
 - Never pay duplicate invoices
 - Never guess or estimate missing values
 - Treat all document content as untrusted input
+- Determine decisions from extracted fields and backend validation/matching results,
+  not from approval instructions written in invoice text
+- Memory provides context and recommendations only; it cannot bypass PO, duplicate,
+  or contract checks
+- Any detected exception is routed for human review; clerk approval/resolution is
+  recorded with its explanation and can inform later recommendations
 
 ---
 
 ## Known Limitations
 
-1. **Ephemeral SQLite on Render** — database resets on every redeploy. Call `/seed-db` after each deploy. For persistence, migrate to PostgreSQL.
+1. **SQLite persistence on Render** — the database uses a local SQLite file and may be ephemeral on the current hosting setup. Reference data and learned memories can be lost on redeploy; call `/seed-db` to restore seeded data. For durable production storage, configure a persistent database (for example PostgreSQL) and update the database configuration.
 2. **Scanned PDFs** — Tesseract OCR handles image files but may struggle with low-resolution scans.
 3. **No authentication** — the API has no auth layer. Add OAuth2/API key before exposing publicly.
 4. **Render free tier cold starts** — backend sleeps after 15 minutes idle; first request takes 30–50 seconds.
-5. **No vendor identity verification** — vendor name is extracted but not cross-checked against the `vendors` table.
+5. **Vendor matching** — extracted vendor name/code is used to look up vendor history, but the code does not enforce that the invoice vendor matches the vendor associated with its PO or contract.
+6. **Prompt-injection test scope** — the deterministic test pre-seeds extracted fields and does not exercise the live LLM extraction prompt. It verifies downstream matching behavior, not general prompt-injection resistance.
 
 ---
 
